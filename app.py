@@ -1,19 +1,25 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
-import time
 from datetime import datetime, timedelta
-import google.generativeai as genai
+import time
 import sqlite3
+import os
 import chromedriver_autoinstaller
+from wordcloud import WordCloud
+from konlpy.tag import Okt
+from sklearn.feature_extraction.text import TfidfVectorizer
+import google.generativeai as genai
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
+app.secret_key = 'your_secret_key'
 
 # OpenAI API 설정
-GOOGLE_API_KEY = 'AIzaSyBlEWYCjt1LSc_r1sykPJS8-7rGrEcyLRc'  # 여기에 새로 발급받은 유효한 API 키를 입력합니다.
+GOOGLE_API_KEY = 'AIzaSyBlEWYCjt1LSc_r1sykPJS8-7rGrEcyLRc'  # 실제 키로 교체하세요
 genai.configure(api_key=GOOGLE_API_KEY)
 generation_config = {
     "temperature": 0.9,
@@ -23,56 +29,40 @@ generation_config = {
 }
 model = genai.GenerativeModel('gemini-pro', generation_config=generation_config)
 
-# 데이터베이스 스키마 업데이트
-def update_db_schema():
-    conn = sqlite3.connect('articles.db')
-    c = conn.cursor()
-    
-    
-    conn.commit()
-    conn.close()
+# 앱 디렉토리 경로
+APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# 데이터베이스 초기화 및 스키마 업데이트
+# 데이터베이스 초기화
 def init_db():
     conn = sqlite3.connect('articles.db')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS articles (
-                id INTEGER PRIMARY KEY,
-                stance TEXT,
-                paper TEXT,
-                title TEXT,
-                time TEXT,
-                content TEXT,
-                link TEXT,
-                summary TEXT,
-                qa TEXT
-                )''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS articles (
+            id INTEGER PRIMARY KEY,
+            stance TEXT,
+            paper TEXT,
+            title TEXT,
+            time TEXT,
+            content TEXT,
+            link TEXT,
+            summary TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
-    update_db_schema()  # 스키마 업데이트 호출
 
-# 기사 데이터 저장 및 ID 반환
 def save_to_db(data):
     conn = sqlite3.connect('articles.db')
     c = conn.cursor()
-    article_ids = []
     for article in data:
-        c.execute('''INSERT INTO articles (stance, paper, title, time, content, link, summary, qa) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', 
-        (article['stance'], article['paper'], article['title'], article['time'], article['content'], article['link'], article.get('summary', ''), article.get('qa', '')))
-        article_id = c.lastrowid  # 마지막으로 삽입된 행의 ID 가져오기
-        article_ids.append(article_id)
+        c.execute('''
+            INSERT INTO articles (stance, paper, title, time, content, link, summary)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', 
+        (article['stance'], article['paper'], article['title'], article['time'], 
+         article['content'], article['link'], article.get('summary', '')))
     conn.commit()
     conn.close()
-    return article_ids
-
-# 데이터베이스에서 기사 가져오기
-def get_articles_from_db(keyword):
-    conn = sqlite3.connect('articles.db')
-    c = conn.cursor()
-    c.execute('''SELECT * FROM articles WHERE content LIKE ?''', ('%' + keyword + '%',))
-    articles = c.fetchall()
-    conn.close()
-    return articles
 
 @app.route('/')
 def index():
@@ -81,13 +71,9 @@ def index():
 @app.route('/search', methods=['POST'])
 def search():
     keyword = request.form['keyword']
-    
-    # Chromedriver 자동 설치 및 설정
-    chromedriver_autoinstaller.install()  # Check if the current version of chromedriver exists
-                                        # and if it doesn't exist, download it automatically,
-                                        # then add chromedriver to path
 
-    # 크롬 드라이버 자동 설치 및 설정
+    # Chromedriver 자동 설치 및 설정
+    chromedriver_autoinstaller.install()
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
@@ -96,109 +82,114 @@ def search():
 
     driver = webdriver.Chrome(service=service, options=options)
 
-    # 신문사 별 oid
+    # 신문사와 성향 설정
     papers = {
         "진보": [("한겨레", "028"), ("경향신문", "032")],
         "중도": [("서울신문", "081"), ("한국일보", "469")],
         "보수": [("조선일보", "023")]
     }
 
-    # 오늘 날짜 및 14일 전 날짜 설정
     end_date = datetime.today()
     start_date = end_date - timedelta(days=14)
-
-    # 빈 리스트 생성
     all_articles = []
+    stance_articles = {"진보": "", "중도": "", "보수": ""}
 
-    # 날짜 범위 내에서 반복
+    # 날짜별 기사 수집
     for single_date in (start_date + timedelta(n) for n in range(14)):
         formatted_date = single_date.strftime("%Y%m%d")
-        
+
         for stance, paper_list in papers.items():
             for paper_name, oid in paper_list:
                 url = f"https://news.naver.com/main/list.naver?mode=LPOD&mid=sec&oid={oid}&listType=title&date={formatted_date}"
                 driver.get(url)
-                
-                # 페이지 소스를 BeautifulSoup로 파싱
                 soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-                # 기사 제목과 링크 추출
                 articles = soup.find_all('a', class_='nclicks(cnt_flashart)')
-                for index, article in enumerate(articles, start=1):
-                    title = article.text.strip()  # 기사 제목 추출
-                    link = article['href']  # 기사 링크 추출
 
-                    # 기사 제목에 키워드가 1번 이상 포함되어 있는지 확인
+                for article in articles:
+                    title = article.text.strip()
+                    link = article['href']
+
                     if keyword in title:
-                        # 기사 페이지로 이동하여 기사 내용 및 시간 추출
                         driver.get(link)
-                        time.sleep(1)
+                        # 불필요한 대기 시간을 줄이기 위해 명시적 대기 대신 암묵적 대기 사용
+                        driver.implicitly_wait(3)
                         try:
                             temp_article = driver.find_element(By.CSS_SELECTOR, '#newsct_article').text
                         except:
                             try:
                                 temp_article = driver.find_element(By.CSS_SELECTOR, '._article_content').text
                             except:
-                                continue  # 내용이 없으면 건너뜀
+                                continue
 
-                        # 기사 내용에 키워드가 2번 이상 포함되어 있는지 확인
                         if temp_article.count(keyword) >= 2:
-                            # 시간 정보 추출
                             try:
-                                # 스포츠 뉴스가 아닌 경우
                                 time_e = driver.find_element(By.CSS_SELECTOR, '.media_end_head_info_datestamp_time').text
                             except:
                                 try:
-                                    # 스포츠 뉴스인 경우
                                     time_e = driver.find_element(By.CSS_SELECTOR, '.NewsEndMain_date__xjtsQ').text
                                 except:
                                     time_e = "시간 정보 없음"
 
-                            # 데이터 저장
                             all_articles.append({
                                 'stance': stance,
                                 'paper': paper_name,
                                 'title': title,
                                 'time': time_e,
                                 'content': temp_article,
-                                'link': link
+                                'link': link,
+                                'summary': '',  # 초기값 설정
                             })
+                            stance_articles[stance] += temp_article
 
-    # 브라우저 종료
     driver.quit()
 
-    # 데이터가 있을 경우 Gemini API로 요약 및 예상 질문과 답변 생성
-    if all_articles:
-        article_ids = save_to_db(all_articles)  # 데이터베이스에 저장하고 ID 리스트를 가져옴
-
-        for idx, article in enumerate(all_articles):
-            temp_article = article['content']
-            
-            # 기사 요약
-            summary_prompt = f"기사 내용을 3줄로 요약해줘:\n{temp_article}\n"
-
-            summary_prompt = '\n'.join([f'• {line.strip()}.' for line in summary_prompt if line])
-    
-
-            try:
-                summary_response = model.generate_content(summary_prompt)
-                if not summary_response.parts:
-                    raise ValueError("No parts returned in the response.")
-                summary = summary_response.text.strip()
-            except ValueError as e:
-                summary = "요약을 생성할 수 없습니다."
-
-
-        # 데이터베이스에 저장 (업데이트)
-        save_to_db(all_articles)
-    else:
+    if not all_articles:
         return "최근 14일 기준으로 해당 키워드가 포함된 기사가 없습니다."
+
+    # 요약을 병렬로 처리
+    def summarize_article(article):
+        temp_article = article['content']
+        prompt = f"다음 기사를 세 줄로 요약해줘:\n{temp_article}"
+        try:
+            response = model.generate_content(prompt)
+            if response and hasattr(response, 'text') and response.text:
+                return response.text.strip()
+            else:
+                return "요약 실패: 응답이 없습니다."
+        except Exception as e:
+            return f"요약 실패: {str(e)}"
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_article = {executor.submit(summarize_article, article): article for article in all_articles}
+        for future in as_completed(future_to_article):
+            article = future_to_article[future]
+            try:
+                summary = future.result()
+            except Exception as exc:
+                summary = f"요약 실패: {str(exc)}"
+            article['summary'] = summary
+
+    save_to_db(all_articles)
+
+    # 워드 클라우드 생성
+    okt = Okt()
+    font_path = 'NanumGothic.ttf'  # 자신의 시스템에 맞는 경로로 설정
+    wordclouds = {}
+    for stance, text in stance_articles.items():
+        if text:
+            nouns = okt.nouns(text)
+            nouns_text = " ".join(nouns)
+
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform([nouns_text])
+            tfidf_dict = dict(zip(vectorizer.get_feature_names_out(), X.toarray()[0]))
+
+            wordcloud = WordCloud(width=800, height=400, background_color='white', font_path=font_path).generate_from_frequencies(tfidf_dict)
+            wordclouds[stance] = wordcloud
+            wordcloud.to_file(os.path.join(APP_ROOT, f"static/wordcloud_{stance}.png"))
 
     return render_template('results.html', keyword=keyword, articles=all_articles)
 
 if __name__ == '__main__':
     init_db()
     app.run(debug=True)
-
-
-
