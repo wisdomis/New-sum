@@ -1,139 +1,100 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>검색 결과</title>
-    <br>
+    <title>검색 결과 및 워드 클라우드</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            background-color: #f9f9f9;
             margin: 0;
             padding: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
+            justify-content: center;
+            background-color: #f4f4f4;
+        }
+        .container {
+            width: 80%;
+            max-width: 1200px;
+            margin: 20px auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
         h1 {
-            color: #333;
             text-align: center;
+            color: #333;
         }
-        .slider {
-            position: relative;
-            width: 80%; /* 전체 너비의 80%로 설정 */
-            max-width: 800px; /* 최대 너비 설정 */
-            margin: 0 auto; /* 가로 가운데 정렬 */
-            overflow: hidden;
-            background-color: #ffe6e6; /* 연한 핑크색 */
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        .article {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            background-color: #fafafa;
         }
-        .slides {
-            display: flex;
-            transition: transform 0.5s ease-in-out;
-        }
-        .slide {
-            min-width: 100%;
-            box-sizing: border-box;
-            padding: 20px;
-            border: 1px solid #ffcccc;
-        }
-        h2 {
+        .article h2 {
             margin-top: 0;
-            color: #000; /* 검은색 */
-        }
-        p {
-            margin: 5px 0;
             color: #555;
         }
+        .article p {
+            margin: 5px 0;
+            color: #666;
+        }
+        .summary {
+            font-style: italic;
+            color: #444;
+        }
         a {
-            color: #d9534f;
+            color: #007bff;
             text-decoration: none;
         }
         a:hover {
             text-decoration: underline;
         }
-        .navigation {
-            text-align: center;
+        .image-container {
             margin-top: 10px;
+            text-align: center;
         }
-        .navigation button {
-            background-color: #d9534f;
-            color: white;
-            border: none;
-            padding: 10px;
-            cursor: pointer;
-            margin: 0 5px;
-            border-radius: 5px;
-        }
-        .navigation button:hover {
-            background-color: #c9302c;
+        .image-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.2);
         }
     </style>
 </head>
 <body>
-    <h1><br>"{{ keyword }}" 키워드의 최근 14일 간 기사입니다.<br></h1>
-    <div class="slider">
-        <div class="slides">
+
+    <div class="container">
+        <h1>"{{ keyword }}" 키워드의 최근 14일간 기사 및 워드 클라우드 결과입니다.</h1>
+        {% if articles %}
             {% for article in articles %}
-            <div class="slide">
-                <h2>기사 제목: {{ article.title }}</h2>
-                <h3><strong>요약: {{ article.summary }}</strong></h3>
-                <p><strong>신문사:</strong> {{ article.paper }}
-                    <strong>시간:</strong> {{ article.time }}
-                    <strong>정치 성향:</strong> {{ article.stance }}</p><br>
-                <p>
-                    {% for sentence in article.summary.split('. ') %}
-                    {{ "- " + sentence }}.<br><br>
-                    {% endfor %}
-                </p>
-                <a href="{{ article.link }}" target="_blank">기사 원문 보러가기</a><br>
-            </div>
+                <div class="article">
+                    <h2>{{ article.title }}</h2>
+                    
+                    {% if article.summary %}
+                        <p class="summary"><strong>요약:</strong> {{ article.summary }}</p>
+                    {% endif %}
+
+                    <p><strong>신문사:</strong> {{ article.paper }}</p>
+                    <p><strong>정치 성향:</strong> {{ article.stance }}</p>
+                    <p><strong>시간:</strong> {{ article.time }}</p>
+                    
+                    <p><a href="{{ article.link }}" target="_blank">전체 기사 보기</a></p>
+                    
+                    <div class="image-container">
+                        <!-- 워드 클라우드 이미지를 기사와 함께 표시 -->
+                        <img src="{{ url_for('static', filename='wordcloud_' + article.stance + '.png') }}" alt="{{ article.stance }} 워드 클라우드">
+                    </div>
+                </div>
             {% endfor %}
-        </div>
-    </div>
-    <div class="navigation">
-        <br>
-        <button onclick="previousSlide()">이전</button>
-        <button onclick="nextSlide()">다음</button>
+        {% else %}
+            <p>검색 결과가 없습니다.</p>
+        {% endif %}
     </div>
 
-    <script>
-        let currentSlide = 0;
-
-        function showSlide(index) {
-            const slides = document.querySelector('.slides');
-            const totalSlides = document.querySelectorAll('.slide').length;
-
-            if (index >= totalSlides) {
-                currentSlide = 0;
-            } else if (index < 0) {
-                currentSlide = totalSlides - 1;
-            } else {
-                currentSlide = index;
-            }
-
-            const offset = -currentSlide * 100;
-            slides.style.transform = `translateX(${offset}%)`;
-        }
-
-        function nextSlide() {
-            showSlide(currentSlide + 1);
-        }
-
-        function previousSlide() {
-            showSlide(currentSlide - 1);
-        }
-
-        // 초기 슬라이드 표시
-        showSlide(currentSlide);
-    </script>
 </body>
 </html>
-
-
-
-
-
-
