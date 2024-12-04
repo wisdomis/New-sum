@@ -6,6 +6,7 @@ WORKDIR /app
 
 # Python 의존성 파일 복사 및 패키지 설치
 COPY requirements.txt .
+RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Flask 애플리케이션 파일 복사
