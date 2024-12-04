@@ -12,12 +12,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Flask 애플리케이션 파일 복사
 COPY . .
 
-# Fly.io 기본 실행 포트 설정
-ENV PORT=8080
+# DigitalOcean 기본 실행 포트 설정
+ENV PORT 8080
 EXPOSE 8080
 
-# Flask 애플리케이션 실행
-# CMD ["python", "app.py"]
+# WSGI 서버 Gunicorn 설치 및 실행
 RUN pip install gunicorn
 
+# Flask 애플리케이션 실행 (gunicorn 사용)
 CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8080", "app:app"]
