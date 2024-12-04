@@ -192,4 +192,6 @@ def search():
 
 if __name__ == '__main__':
     init_db()
-    app.run(debug=True)
+    import os
+    port = int(os.environ.get("PORT", 5000))  # DigitalOcean은 PORT=8080을 설정
+    app.run(host="0.0.0.0", port=port)
