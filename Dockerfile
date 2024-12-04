@@ -17,4 +17,7 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Flask 애플리케이션 실행
-CMD ["python", "app.py"]
+# CMD ["python", "app.py"]
+RUN pip install gunicorn
+
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8080", "app:app"]
