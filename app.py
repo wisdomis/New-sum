@@ -72,13 +72,15 @@ def index():
 def search():
     keyword = request.form['keyword']
 
+
     # Chromedriver 자동 설치 및 설정
-    chromedriver_autoinstaller.install()
+    chromedriver_path = chromedriver_autoinstaller.install()
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    service = Service()
+    options.add_argument('--disable-gpu')
+    service = Service(chromedriver_path)
 
     driver = webdriver.Chrome(service=service, options=options)
 
